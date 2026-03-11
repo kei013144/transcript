@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import logging
 from pathlib import Path
 from typing import Any
 
 from .exceptions import TranscriptionError
 from .models import Segment, TranscriptResult
+
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:  # pragma: no cover - optional dependency guard
+    tqdm = None
 
 
 class Transcriber(ABC):
@@ -117,12 +123,17 @@ class FasterWhisperTranscriber(Transcriber):
     def __init__(
         self,
         model_size: str = "small",
-        device: str = "auto",
+        device: str = "cpu",
         compute_type: str = "int8",
+        show_progress: bool = True,
+        logger: logging.Logger | None = None,
     ) -> None:
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
+        self.show_progress = show_progress
+        self.logger = logger or logging.getLogger(__name__)
+        self._progress_warning_emitted = False
         self._model: Any | None = None
 
     def transcribe(
@@ -131,13 +142,31 @@ class FasterWhisperTranscriber(Transcriber):
         if not audio_path.exists():
             raise TranscriptionError(f"Audio file does not exist: {audio_path}")
 
+        if self.show_progress and tqdm is None and not self._progress_warning_emitted:
+            self.logger.warning(
+                "tqdm is not installed. Progress bars are disabled. Run `pip install -r requirements.txt`."
+            )
+            self._progress_warning_emitted = True
+
         model = self._get_model()
+        progress_bar: Any | None = None
+        last_progress = 0.0
         try:
             segments_iter, info = model.transcribe(
                 str(audio_path),
                 language=language,
                 vad_filter=True,
             )
+            duration = _to_non_negative_float(getattr(info, "duration", 0.0))
+            if self.show_progress and tqdm is not None and duration > 0:
+                progress_bar = tqdm(
+                    total=duration,
+                    desc="Transcribing",
+                    unit="s",
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+
             parsed_segments: list[Segment] = []
             for segment in segments_iter:
                 text = str(getattr(segment, "text", "")).strip()
@@ -146,8 +175,20 @@ class FasterWhisperTranscriber(Transcriber):
                 start = float(getattr(segment, "start", 0.0))
                 end = float(getattr(segment, "end", start))
                 parsed_segments.append(Segment(start=start, end=end, text=text))
+
+                if progress_bar is not None:
+                    current = _to_non_negative_float(end)
+                    if current > last_progress:
+                        progress_bar.update(current - last_progress)
+                        last_progress = current
+
+            if progress_bar is not None and progress_bar.total and last_progress < progress_bar.total:
+                progress_bar.update(progress_bar.total - last_progress)
         except Exception as exc:  # pragma: no cover - external dependency errors
             raise TranscriptionError("faster-whisper transcription failed") from exc
+        finally:
+            if progress_bar is not None:
+                progress_bar.close()
 
         if not parsed_segments:
             raise TranscriptionError("Transcription returned empty text")
@@ -194,3 +235,10 @@ def _to_plain_dict(obj: Any) -> dict[str, Any]:
         if isinstance(dumped, dict):
             return dumped
     return {}
+
+
+def _to_non_negative_float(value: Any) -> float:
+    try:
+        return max(float(value), 0.0)
+    except (TypeError, ValueError):
+        return 0.0

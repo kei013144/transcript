@@ -30,7 +30,7 @@ export OPENAI_API_KEY="YOUR_KEY"  # Windows PowerShell: $env:OPENAI_API_KEY="YOU
 
 ## 使い方まとめ
 
-1. YouTube URLを指定して実行（デフォルトはローカルWhisper）
+1. YouTube URLを指定して実行（デフォルトはローカルWhisper / CPU / 進捗バーON）
 2. 標準出力に出る `transcript_path` / `segments_path` / `metadata_path` を確認
 
 最小実行:
@@ -53,27 +53,29 @@ python main.py "https://www.youtube.com/watch?v=VIDEO_ID" --transcriber openai
 
 同じ `video_id` で再実行:
 
-- 既存キャッシュを利用し、再ダウンロード・再文字起こしをスキップ
+- デフォルトでは音声キャッシュは利用し、文字起こしは毎回再実行（`--force-transcribe` が既定で有効）
+- 文字起こしキャッシュを利用したい場合は `--no-force-transcribe` を指定
 
 再取得したい場合:
 
 ```bash
 python main.py "https://www.youtube.com/watch?v=VIDEO_ID" --force-download
-python main.py "https://www.youtube.com/watch?v=VIDEO_ID" --force-transcribe
 python main.py "https://www.youtube.com/watch?v=VIDEO_ID" --force-download --force-transcribe
+python main.py "https://www.youtube.com/watch?v=VIDEO_ID" --no-force-transcribe
 ```
 
 オプション一覧:
 
 - `--transcriber`: 文字起こしバックエンド（`faster-whisper` / `openai`）
 - `--force-download`: 音声キャッシュがあっても再ダウンロード
-- `--force-transcribe`: 文字起こしキャッシュがあっても再実行
+- `--force-transcribe` / `--no-force-transcribe`: 文字起こしキャッシュ利用の切り替え（`default: --force-transcribe`）
 - `--output-root`: 出力ルート (`default: data`)
 - `--prefer-captions`: 将来の字幕優先モード用フラグ（現状はSTTへフォールバック）
 - `--openai-model`: OpenAIモデル (`default: whisper-1`)
 - `--whisper-model`: ローカルfaster-whisperモデル (`default: small`)
-- `--whisper-device`: ローカルfaster-whisperデバイス (`default: auto`)
+- `--whisper-device`: ローカルfaster-whisperデバイス (`default: cpu`)
 - `--whisper-compute-type`: ローカルfaster-whisper計算精度 (`default: int8`)
+- `--progress` / `--no-progress`: ダウンロード・文字起こし時の進捗バー表示切り替え（`default: --progress`）
 - `--log-level`: ログレベル (`DEBUG/INFO/WARNING/ERROR`)
 
 出力先を変更する例:
@@ -100,7 +102,8 @@ data/
 
 - キャッシュキーは URL ではなく `video_id`
 - `audio/source.m4a` が存在する場合、再ダウンロードをスキップ
-- `transcript/transcript.txt` と `segments.json` が存在する場合、再文字起こしをスキップ
+- `transcript/transcript.txt` と `segments.json` が存在しても、デフォルトでは再文字起こしを実行
+- `--no-force-transcribe` 指定時のみ、文字起こしキャッシュがある場合に再文字起こしをスキップ
 
 ## クラス構成
 

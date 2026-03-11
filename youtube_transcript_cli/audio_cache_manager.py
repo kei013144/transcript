@@ -5,19 +5,32 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from shutil import which
+from typing import Any
 
 import yt_dlp
 
 from .exceptions import AudioDownloadError
 
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:  # pragma: no cover - optional dependency guard
+    tqdm = None
+
 
 class AudioCacheManager:
     """Manage cached audio files keyed by YouTube video_id."""
 
-    def __init__(self, output_root: Path, logger: logging.Logger | None = None) -> None:
+    def __init__(
+        self,
+        output_root: Path,
+        logger: logging.Logger | None = None,
+        show_progress: bool = True,
+    ) -> None:
         self.output_root = output_root
         self.youtube_root = self.output_root / "youtube"
         self.logger = logger or logging.getLogger(__name__)
+        self.show_progress = show_progress
+        self._progress_warning_emitted = False
 
     def video_root(self, video_id: str) -> Path:
         return self.youtube_root / video_id
@@ -64,6 +77,48 @@ class AudioCacheManager:
             )
 
         outtmpl = str(self.audio_dir(video_id) / "source.%(ext)s")
+        progress_bar: Any | None = None
+
+        if self.show_progress and tqdm is None and not self._progress_warning_emitted:
+            self.logger.warning(
+                "tqdm is not installed. Progress bars are disabled. Run `pip install -r requirements.txt`."
+            )
+            self._progress_warning_emitted = True
+
+        def _progress_hook(status: dict[str, Any]) -> None:
+            nonlocal progress_bar
+            if not self.show_progress or tqdm is None:
+                return
+
+            state = status.get("status")
+            if state == "downloading":
+                downloaded = int(status.get("downloaded_bytes") or 0)
+                total_raw = status.get("total_bytes") or status.get(
+                    "total_bytes_estimate"
+                )
+                total = int(total_raw) if total_raw else None
+
+                if progress_bar is None:
+                    progress_bar = tqdm(
+                        total=total,
+                        desc="Downloading audio",
+                        unit="B",
+                        unit_scale=True,
+                        dynamic_ncols=True,
+                        leave=False,
+                    )
+                elif total and progress_bar.total != total:
+                    progress_bar.total = total
+
+                delta = downloaded - int(progress_bar.n)
+                if delta > 0:
+                    progress_bar.update(delta)
+
+            if state == "finished" and progress_bar is not None:
+                progress_bar.set_description("Processing audio")
+                if progress_bar.total and progress_bar.n < progress_bar.total:
+                    progress_bar.update(progress_bar.total - progress_bar.n)
+
         ydl_opts = {
             "format": "bestaudio/best",
             "outtmpl": outtmpl,
@@ -77,6 +132,7 @@ class AudioCacheManager:
                     "preferredquality": "192",
                 }
             ],
+            "progress_hooks": [_progress_hook],
         }
 
         try:
@@ -86,6 +142,9 @@ class AudioCacheManager:
             raise AudioDownloadError(
                 "Audio download failed. Ensure yt-dlp and ffmpeg are installed."
             ) from exc
+        finally:
+            if progress_bar is not None:
+                progress_bar.close()
 
         if target_path.exists():
             return target_path, True

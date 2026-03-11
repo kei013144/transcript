@@ -20,8 +20,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--force-transcribe",
-        action="store_true",
-        help="Re-transcribe even if transcript cache exists.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Re-transcribe even if transcript cache exists (default: true).",
     )
     parser.add_argument(
         "--output-root",
@@ -52,8 +53,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--whisper-device",
-        default="auto",
-        help="Local faster-whisper device (default: auto).",
+        default="cpu",
+        help="Local faster-whisper device (default: cpu).",
     )
     parser.add_argument(
         "--whisper-compute-type",
@@ -65,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Log level (default: INFO).",
+    )
+    parser.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Show progress bars for download/transcription (default: true).",
     )
     return parser
 
@@ -100,7 +107,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     resolver = YouTubeResolver()
-    audio_cache = AudioCacheManager(output_root=args.output_root, logger=logger)
+    audio_cache = AudioCacheManager(
+        output_root=args.output_root,
+        logger=logger,
+        show_progress=args.progress,
+    )
     transcript_store = TranscriptStore(output_root=args.output_root)
     if args.transcriber == "openai":
         transcriber_factory = lambda: OpenAITranscriber(model=args.openai_model)
@@ -109,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
             model_size=args.whisper_model,
             device=args.whisper_device,
             compute_type=args.whisper_compute_type,
+            show_progress=args.progress,
+            logger=logger,
         )
 
     service = TranscriptService(
